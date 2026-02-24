@@ -5,10 +5,7 @@ from langgraph.graph.message import add_messages
 from langchain.chat_models import init_chat_model
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
-from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-
 from web_operations import serp_search, reddit_search_api, reddit_post_retrieval
-
 from promts import (
     get_reddit_analysis_messages,
     get_google_analysis_messages,
@@ -19,15 +16,7 @@ from promts import (
 
 load_dotenv()
 
-llm1=HuggingFaceEndpoint(
-    repo_id="Qwen/Qwen2.5-7B-Instruct",
-    task="text-generation",
-    temperature=0.5,
-    top_p=0.9,
-    repetition_penalty=1.05
-)
-
-llm=ChatHuggingFace(llm=llm1)
+llm = init_chat_model("gpt-4o")
 
 class State(TypedDict):
     messages: Annotated[list, add_messages]
@@ -43,8 +32,8 @@ class State(TypedDict):
     final_answer: str | None
 
 
-class RedditURLAnalysis(TypedDict):
-    selected_urls: List[str] # = Field(description="List of Reddit URLs that contain valuable information for answering the user's question")
+class RedditURLAnalysis(BaseModel):
+    selected_urls: List[str] = Field(description="List of Reddit URLs that contain valuable information for answering the user's question")
 
 
 def google_search(state: State):
