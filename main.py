@@ -5,12 +5,13 @@ from langgraph.graph.message import add_messages
 from langchain.chat_models import init_chat_model
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
-from web_operations import serp_search, reddit_search_api, reddit_post_retrieval
+from web_operations import serp_search, reddit_search_api, reddit_post_retrieval, tavily_search
 from promts import (
     get_reddit_analysis_messages,
     get_google_analysis_messages,
     get_bing_analysis_messages,
     get_reddit_url_analysis_messages,
+    get_tavily_analysis_messages,
     get_synthesis_messages
 )
 
@@ -29,6 +30,8 @@ class State(TypedDict):
     google_analysis: str | None
     bing_analysis: str | None
     reddit_analysis: str | None
+    tavily_results: str | None
+    tavily_analysis: str | None
     final_answer: str | None
 
 
@@ -152,6 +155,27 @@ def analyze_reddit_results(state: State):
     return {"reddit_analysis": reply.content}
 
 
+def tavily_search_node(state: State):
+    user_question = state.get("user_question", "")
+    print(f"Searching Tavily for: {user_question}")
+
+    tavily_results = tavily_search(user_question)
+
+    return {"tavily_results": tavily_results}
+
+
+def analyze_tavily_results(state: State):
+    print("Analyzing Tavily search results")
+
+    user_question = state.get("user_question", "")
+    tavily_results = state.get("tavily_results", "")
+
+    messages = get_tavily_analysis_messages(user_question, tavily_results)
+    reply = llm.invoke(messages)
+
+    return {"tavily_analysis": reply.content}
+
+
 def synthesize_analyses(state: State):
     print("Combine all results together")
 
@@ -159,9 +183,10 @@ def synthesize_analyses(state: State):
     google_analysis = state.get("google_analysis", "")
     bing_analysis = state.get("bing_analysis", "")
     reddit_analysis = state.get("reddit_analysis", "")
+    tavily_analysis = state.get("tavily_analysis", "")
 
     messages = get_synthesis_messages(
-        user_question, google_analysis, bing_analysis, reddit_analysis
+        user_question, google_analysis, bing_analysis, reddit_analysis, tavily_analysis
     )
 
     reply = llm.invoke(messages)
@@ -183,11 +208,14 @@ graph_builder.add_node("retrieve_reddit_posts", retrieve_reddit_posts)
 graph_builder.add_node("analyze_google_results", analyze_google_results)
 graph_builder.add_node("analyze_bing_results", analyze_bing_results)
 graph_builder.add_node("analyze_reddit_results", analyze_reddit_results)
+graph_builder.add_node("tavily_search", tavily_search_node)
+graph_builder.add_node("analyze_tavily_results", analyze_tavily_results)
 graph_builder.add_node("synthesize_analyses", synthesize_analyses)
 
 graph_builder.add_edge(START, "google_search")
 graph_builder.add_edge(START, "bing_search")
 graph_builder.add_edge(START, "reddit_search")
+graph_builder.add_edge(START, "tavily_search")
 
 graph_builder.add_edge("google_search", "analyze_reddit_posts")
 graph_builder.add_edge("bing_search", "analyze_reddit_posts")
@@ -198,9 +226,12 @@ graph_builder.add_edge("retrieve_reddit_posts", "analyze_google_results")
 graph_builder.add_edge("retrieve_reddit_posts", "analyze_bing_results")
 graph_builder.add_edge("retrieve_reddit_posts", "analyze_reddit_results")
 
+graph_builder.add_edge("tavily_search", "analyze_tavily_results")
+
 graph_builder.add_edge("analyze_google_results", "synthesize_analyses")
 graph_builder.add_edge("analyze_bing_results", "synthesize_analyses")
 graph_builder.add_edge("analyze_reddit_results", "synthesize_analyses")
+graph_builder.add_edge("analyze_tavily_results", "synthesize_analyses")
 
 graph_builder.add_edge("synthesize_analyses", END)
 
@@ -232,11 +263,13 @@ def run_chatbot():
             "google_analysis": None,
             "bing_analysis": None,
             "reddit_analysis": None,
+            "tavily_results": None,
+            "tavily_analysis": None,
             "final_answer": None,
         }
 
         print("\nStarting parallel research process...")
-        print("Launching Google, Bing, and Reddit searches...\n")
+        print("Launching Google, Bing, Reddit, and Tavily searches...\n")
         final_state = graph.invoke(state)
 
         if final_state.get("final_answer"):

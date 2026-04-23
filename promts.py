@@ -100,16 +100,38 @@ Detailed Reddit Post Data: {reddit_post_data}
 Please analyze this Reddit content and extract community insights, user experiences, and relevant discussions."""
 
     @staticmethod
+    def tavily_analysis_system() -> str:
+        """System prompt for analyzing Tavily search results."""
+        return """You are an expert research analyst. Analyze the provided Tavily search results to extract key insights that answer the user's question.
+
+Focus on:
+- High-relevance results with strong scores
+- Diverse sources and perspectives
+- Factual information, statistics, and verified claims
+- Recent and up-to-date information
+
+Provide a concise analysis highlighting the most relevant findings."""
+
+    @staticmethod
+    def tavily_analysis_user(user_question: str, tavily_results: str) -> str:
+        """User prompt for analyzing Tavily search results."""
+        return f"""Question: {user_question}
+
+Tavily Search Results: {tavily_results}
+
+Please analyze these Tavily results and extract the key insights that help answer the question."""
+
+    @staticmethod
     def synthesis_system() -> str:
         """System prompt for synthesizing all analyses."""
         return """You are an expert research synthesizer. Combine the provided analyses from different sources to create a comprehensive, well-structured answer.
 
 Your task:
-- Synthesize insights from Google, Bing, and Reddit analyses
+- Synthesize insights from Google, Bing, Tavily, and Reddit analyses
 - Identify common themes and conflicting information
 - Present a balanced view incorporating different perspectives
 - Structure the response logically with clear sections
-- Cite the source type (Google, Bing, Reddit) for key claims
+- Cite the source type (Google, Bing, Tavily, Reddit) for key claims
 - Highlight any contradictions or uncertainties
 
 Create a comprehensive answer that addresses the user's question from multiple angles."""
@@ -120,6 +142,7 @@ Create a comprehensive answer that addresses the user's question from multiple a
         google_analysis: str,
         bing_analysis: str,
         reddit_analysis: str,
+        tavily_analysis: str = "",
     ) -> str:
         """User prompt for synthesizing all analyses."""
         return f"""Question: {user_question}
@@ -127,6 +150,8 @@ Create a comprehensive answer that addresses the user's question from multiple a
 Google Analysis: {google_analysis}
 
 Bing Analysis: {bing_analysis}
+
+Tavily Analysis: {tavily_analysis}
 
 Reddit Community Analysis: {reddit_analysis}
 
@@ -193,13 +218,27 @@ def get_reddit_analysis_messages(
     )
 
 
+def get_tavily_analysis_messages(
+    user_question: str, tavily_results: str
+) -> list[Dict[str, Any]]:
+    """Get messages for Tavily results analysis."""
+    return create_message_pair(
+        PromptTemplates.tavily_analysis_system(),
+        PromptTemplates.tavily_analysis_user(user_question, tavily_results),
+    )
+
+
 def get_synthesis_messages(
-    user_question: str, google_analysis: str, bing_analysis: str, reddit_analysis: str
+    user_question: str,
+    google_analysis: str,
+    bing_analysis: str,
+    reddit_analysis: str,
+    tavily_analysis: str = "",
 ) -> list[Dict[str, Any]]:
     """Get messages for final synthesis."""
     return create_message_pair(
         PromptTemplates.synthesis_system(),
         PromptTemplates.synthesis_user(
-            user_question, google_analysis, bing_analysis, reddit_analysis
+            user_question, google_analysis, bing_analysis, reddit_analysis, tavily_analysis
         ),
     )
