@@ -6,7 +6,6 @@ from snapshot_operations import download_snapshot, poll_snapshot_status
 
 load_dotenv()
 
-dataset_id = "gd_lvz8ah06191smkebj4"
 def _make_api_request(url, **kwargs):
     api_key = os.getenv("BRIGHTDATA_API_KEY")
 
