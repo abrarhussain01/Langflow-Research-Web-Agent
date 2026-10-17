@@ -104,6 +104,8 @@ retrieval errors remain in the evidence; a failed MCP request stops that questio
 Each Parallel research operation has a 60-second total timeout. Free service limits
 apply; a quota error is reported without automatic retries. Questions and selected
 source URLs are sent to Parallel only when that provider is selected.
+Search and fetch share a stable session identifier across questions in the same CLI
+process. Starting a new process starts a new application session.
 
 ---
 

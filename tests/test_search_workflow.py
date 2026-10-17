@@ -197,12 +197,13 @@ class WorkflowTests(unittest.TestCase):
         serp.assert_not_called()
         self.assertEqual(self.model.messages, [])
 
-    def test_distinct_question_sessions_are_not_reused(self):
+    def test_conversation_session_is_stable_across_questions(self):
         with ProtocolFixture().installed() as fixture:
-            for _ in range(2):
-                main.graph.invoke({"messages": [], "user_question": QUESTION})
+            for question in [QUESTION, "What else does the source explain?"]:
+                main.graph.invoke({"messages": [], "user_question": question})
         searches = [c for c in fixture.tool_calls() if c["name"] == "web_search"]
-        self.assertNotEqual(searches[0]["arguments"]["session_id"], searches[1]["arguments"]["session_id"])
+        self.assertEqual(searches[0]["arguments"]["session_id"], searches[1]["arguments"]["session_id"])
+        self.assertEqual(searches[0]["arguments"]["session_id"], parallel_search.SESSION_ID)
 
 
 class MCPTests(unittest.IsolatedAsyncioTestCase):

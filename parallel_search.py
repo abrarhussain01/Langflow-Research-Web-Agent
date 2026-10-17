@@ -15,6 +15,8 @@ USER_AGENT = (
     "Langflow-Research-Web-Agent/1.0 "
     "(+https://github.com/abrarhussain01/Langflow-Research-Web-Agent)"
 )
+# The CLI conversation lasts for the process, including successive questions.
+SESSION_ID = str(uuid4())
 
 
 class ParallelSearchError(RuntimeError):
@@ -57,12 +59,13 @@ def _source_urls(results):
 async def research(question, *, session_id=None, timeout=60):
     """Search and fetch up to three sources within one cancellable time budget.
 
-    A session ID belongs to a research question and is shared by search and fetch.
+    The default ID stays stable across questions in this application session and
+    is shared by search and fetch. Embedders may supply their conversation ID.
     No environment credentials are read and no application retries are made.
     """
     if not question or not question.strip():
         raise ValueError("A research question is required")
-    session_id = session_id or str(uuid4())
+    session_id = session_id or SESSION_ID
     arguments = {
         "objective": question,
         "search_queries": [question],
