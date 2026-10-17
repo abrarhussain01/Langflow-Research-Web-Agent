@@ -75,7 +75,6 @@ async def research(question, *, session_id=None, timeout=60):
                 headers={"User-Agent": USER_AGENT},
                 timeout=httpx.Timeout(timeout),
                 follow_redirects=False,
-                trust_env=False,
             ) as client:
                 async with streamable_http_client(MCP_URL, http_client=client) as (read, write, _):
                     async with ClientSession(read, write) as session:
