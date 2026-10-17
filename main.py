@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+import json
 from typing import Annotated, List
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -6,17 +7,28 @@ from langchain.chat_models import init_chat_model
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 from web_operations import serp_search, reddit_search_api, reddit_post_retrieval
+from parallel_search import parallel_research, ParallelSearchError
+from search_provider import resolve_search_provider
 from promts import (
     get_reddit_analysis_messages,
     get_google_analysis_messages,
     get_bing_analysis_messages,
     get_reddit_url_analysis_messages,
-    get_synthesis_messages
+    get_synthesis_messages,
+    get_parallel_analysis_messages,
+    get_parallel_synthesis_messages,
 )
 
 load_dotenv()
 
-llm = init_chat_model("gpt-4o")
+llm = None
+
+
+def get_model():
+    global llm
+    if llm is None:
+        llm = init_chat_model("gpt-4o")
+    return llm
 
 class State(TypedDict):
     messages: Annotated[list, add_messages]
@@ -30,10 +42,44 @@ class State(TypedDict):
     bing_analysis: str | None
     reddit_analysis: str | None
     final_answer: str | None
+    search_provider: str | None
+    parallel_results: dict | None
+    parallel_analysis: str | None
 
 
 class RedditURLAnalysis(BaseModel):
     selected_urls: List[str] = Field(description="List of Reddit URLs that contain valuable information for answering the user's question")
+
+
+def select_search(state: State):
+    provider = resolve_search_provider()
+    # Initialize once before the original graph fans out into concurrent analyses.
+    if provider != "none":
+        get_model()
+    return {"search_provider": provider}
+
+
+def search_routes(state: State):
+    if state["search_provider"] == "brightdata":
+        return ["google_search", "bing_search", "reddit_search"]
+    return "parallel_search" if state["search_provider"] == "parallel" else "no_search"
+
+
+def parallel_search(state: State):
+    print(f"Searching with Parallel for: {state['user_question']}")
+    return {"parallel_results": parallel_research(state["user_question"])}
+
+
+def analyze_parallel_results(state: State):
+    messages = get_parallel_analysis_messages(
+        state["user_question"], json.dumps(state["parallel_results"], ensure_ascii=False)
+    )
+    return {"parallel_analysis": get_model().invoke(messages).content}
+
+
+def no_search(state: State):
+    answer = "Web search is disabled (SEARCH_PROVIDER=none)."
+    return {"final_answer": answer, "messages": [{"role": "assistant", "content": answer}]}
 
 
 def google_search(state: State):
@@ -76,7 +122,7 @@ def analyze_reddit_posts(state: State):
     print("________________")
     print(messages)
     print("----------------")
-    structured_llm = llm.with_structured_output(RedditURLAnalysis)
+    structured_llm = get_model().with_structured_output(RedditURLAnalysis)
 
     try:
         analysis = structured_llm.invoke(messages)
@@ -122,7 +168,7 @@ def analyze_google_results(state: State):
     google_results = state.get("google_results", "")
 
     messages = get_google_analysis_messages(user_question, google_results)
-    reply = llm.invoke(messages)
+    reply = get_model().invoke(messages)
 
     return {"google_analysis": reply.content}
 
@@ -134,7 +180,7 @@ def analyze_bing_results(state: State):
     bing_results = state.get("bing_results", "")
 
     messages = get_bing_analysis_messages(user_question, bing_results)
-    reply = llm.invoke(messages)
+    reply = get_model().invoke(messages)
 
     return {"bing_analysis": reply.content}
 
@@ -147,7 +193,7 @@ def analyze_reddit_results(state: State):
     reddit_post_data = state.get("reddit_post_data", "")
 
     messages = get_reddit_analysis_messages(user_question, reddit_results, reddit_post_data)
-    reply = llm.invoke(messages)
+    reply = get_model().invoke(messages)
 
     return {"reddit_analysis": reply.content}
 
@@ -160,11 +206,14 @@ def synthesize_analyses(state: State):
     bing_analysis = state.get("bing_analysis", "")
     reddit_analysis = state.get("reddit_analysis", "")
 
-    messages = get_synthesis_messages(
-        user_question, google_analysis, bing_analysis, reddit_analysis
-    )
+    if state.get("search_provider") == "parallel":
+        messages = get_parallel_synthesis_messages(user_question, state["parallel_analysis"])
+    else:
+        messages = get_synthesis_messages(
+            user_question, google_analysis, bing_analysis, reddit_analysis
+        )
 
-    reply = llm.invoke(messages)
+    reply = get_model().invoke(messages)
     final_answer = reply.content
 
     return {"final_answer": final_answer, "messages": [{"role": "assistant", "content": final_answer}]}
@@ -175,6 +224,10 @@ def synthesize_analyses(state: State):
 
 graph_builder = StateGraph(State)
 
+graph_builder.add_node("select_search", select_search)
+graph_builder.add_node("parallel_search", parallel_search)
+graph_builder.add_node("analyze_parallel_results", analyze_parallel_results)
+graph_builder.add_node("no_search", no_search)
 graph_builder.add_node("google_search", google_search)
 graph_builder.add_node("bing_search", bing_search)
 graph_builder.add_node("reddit_search", reddit_search)
@@ -185,9 +238,12 @@ graph_builder.add_node("analyze_bing_results", analyze_bing_results)
 graph_builder.add_node("analyze_reddit_results", analyze_reddit_results)
 graph_builder.add_node("synthesize_analyses", synthesize_analyses)
 
-graph_builder.add_edge(START, "google_search")
-graph_builder.add_edge(START, "bing_search")
-graph_builder.add_edge(START, "reddit_search")
+graph_builder.add_edge(START, "select_search")
+graph_builder.add_conditional_edges("select_search", search_routes,
+    ["google_search", "bing_search", "reddit_search", "parallel_search", "no_search"])
+graph_builder.add_edge("parallel_search", "analyze_parallel_results")
+graph_builder.add_edge("analyze_parallel_results", "synthesize_analyses")
+graph_builder.add_edge("no_search", END)
 
 graph_builder.add_edge("google_search", "analyze_reddit_posts")
 graph_builder.add_edge("bing_search", "analyze_reddit_posts")
@@ -206,20 +262,17 @@ graph_builder.add_edge("synthesize_analyses", END)
 
 graph = graph_builder.compile()
 
-from IPython.display import Image, display
-
-display(Image(graph.get_graph().draw_mermaid_png()))
-
-
 def run_chatbot():
     print("Multi-Source Research Agent")
     print("Type 'exit' to quit\n")
 
     while True:
-        user_input = input("Ask me anything: ")
+        user_input = input("Ask me anything: ").strip()
         if user_input.lower() == "exit":
             print("Bye")
             break
+        if not user_input:
+            continue
 
         state = {
             "messages": [{"role": "user", "content": user_input}],
@@ -233,19 +286,22 @@ def run_chatbot():
             "bing_analysis": None,
             "reddit_analysis": None,
             "final_answer": None,
+            "search_provider": None,
+            "parallel_results": None,
+            "parallel_analysis": None,
         }
 
         print("\nStarting parallel research process...")
-        print("Launching Google, Bing, and Reddit searches...\n")
-        final_state = graph.invoke(state)
+        try:
+            final_state = graph.invoke(state)
+        except (ParallelSearchError, ValueError) as exc:
+            print(f"Research failed: {exc}")
+            continue
 
         if final_state.get("final_answer"):
             print(f"\nFinal Answer:\n{final_state.get('final_answer')}\n")
 
         print("-" * 80)
-        from IPython.display import Image, display
-
-        display(Image(graph.get_graph().draw_mermaid_png()))
 
 
 if __name__ == "__main__":
