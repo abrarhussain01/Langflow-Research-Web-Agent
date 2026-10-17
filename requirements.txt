@@ -1,0 +1,8 @@
+langchain[openai]>=1.0,<2
+langgraph>=1.0,<2
+mcp>=1.28,<2
+httpx>=0.28,<1
+python-dotenv>=1.0,<2
+pydantic>=2.0,<3
+requests>=2.32,<3
+typing_extensions>=4.12,<5
